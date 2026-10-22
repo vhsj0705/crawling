@@ -1,0 +1,58 @@
+name: skills.sh leaderboard snapshot
+
+on:
+  schedule:
+    - cron: "0 0 * * *" # 매일 09:00 KST (cron 은 기본 브랜치에서만 동작)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: skills-sh-leaderboard
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: skills_sh/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r skills_sh/requirements.txt
+
+      - name: Extract - 리더보드 수집
+        run: python skills_sh/scrape_leaderboard.py
+
+      - name: Transform - 변동 리포트 생성
+        run: python skills_sh/report.py >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Load - 스냅샷/리포트 커밋
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add skills_sh/data skills_sh/REPORT.md
+          if git diff --cached --quiet; then
+            echo "변경 없음"
+            exit 0
+          fi
+          git commit -m "skills.sh snapshot $(TZ=Asia/Seoul date +%F)"
+          for i in 1 2 3; do
+            git pull --rebase origin "$GITHUB_REF_NAME" && git push origin "HEAD:$GITHUB_REF_NAME" && exit 0
+            sleep $((i * 5))
+          done
+          exit 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: skills-sh-snapshot
+          path: |
+            skills_sh/data/*.csv
+            skills_sh/REPORT.md
+          retention-days: 30
